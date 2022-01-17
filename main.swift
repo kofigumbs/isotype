@@ -112,8 +112,17 @@ NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
     return nil
 }
 
+// Workaround to make sure app starts with focus <https://stackoverflow.com/a/65763273>
+//
+@objc class Delegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 // Start!
 //
-NSApp.setActivationPolicy(NSApplication.ActivationPolicy.regular)
-NSApp.activate(ignoringOtherApps: true)
+let delegate = Delegate()
+NSApp.delegate = delegate
 NSApp.run()
