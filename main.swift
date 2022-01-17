@@ -101,9 +101,9 @@ NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
     if !event.isARepeat {
         let note = root + offset
         let midi: MidiEvent = event.type == .keyDown ? .noteOn(channel: 0, note: note, velocity: 127) : .noteOff(channel: 0, note: note)
-        let result = [midi].asPacketList().flatMap { packet in
+        let result: ()? = [midi].asPacketList().flatMap { packet in
             var packet = packet
-            try? SwiftMIDI.send(port: port, destination: device.endpoint, packetListPointer: &packet)
+            return try? SwiftMIDI.send(port: port, destination: device.endpoint, packetListPointer: &packet)
         }
         if result == nil {
             log("MIDI SEND ERROR", message: "note: \(note)")
