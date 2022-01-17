@@ -16,31 +16,18 @@ let offsets: [String: UInt8] = [
     "z": 00, "x": 01, "c": 02, "v": 03, "b": 04, "n": 05, "m": 06, ",": 07, ".": 08, "/": 09,
 ]
 
-// Make console messages more obvious
-//
-func log(_ title: String, message: String) {
-    print("== \(title) ====\n\(message)\n")
-}
-
 // Initialize the Isotype MIDI client -- exit on failure
 //
-let client = try? SwiftMIDI.createClient(name: "Isotype") { notification in
+let client = try! SwiftMIDI.createClient(name: "Isotype") { notification in
     if let notification = SwiftMIDI.Notification.make(with: notification) {
-        log("MIDI NOTIFICATION", message: notification.description)
+        print(notification.description)
     }
-}
-guard let client = client else {
-    log("FATAL ERROR", message: "Failed to create the Isotype MIDI client")
-    exit(1)
 }
 defer { try? SwiftMIDI.disposeClient(client) }
 
 // Initialize the keyboard MIDI port -- exit on failure
 //
-guard let port = try? SwiftMIDI.createOutputPort(clientRef: client, portName: "keyboard") else {
-    log("FATAL ERROR", message: "Failed to create the keyboard MIDI port")
-    exit(2)
-}
+let port = try! SwiftMIDI.createOutputPort(clientRef: client, portName: "keyboard")
 
 // Setup device selection state
 //
@@ -106,8 +93,8 @@ NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
         packet.length = 3
         packet.timeStamp = 0
         var packets = MIDIPacketList(numPackets: 1, packet: packet)
-        if (try? SwiftMIDI.send(port: port, destination: device.endpoint, packetListPointer: &packets)) == nil {
-            log("MIDI SEND ERROR", message: "[\(packet.data.0), \(packet.data.1), \(packet.data.2)]")
+        if case .failure(let error) = Result(catching: { try SwiftMIDI.send(port: port, destination: device.endpoint, packetListPointer: &packets) }) {
+            print("\(error), [\(packet.data.0), \(packet.data.1), \(packet.data.2)]")
         }
     }
     return nil
