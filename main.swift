@@ -16,24 +16,12 @@ let offsets: [String: UInt8] = [
     "z": 00, "x": 01, "c": 02, "v": 03, "b": 04, "n": 05, "m": 06, ",": 07, ".": 08, "/": 09,
 ]
 
-// Initialize the Isotype MIDI client -- exit on failure
-//
-let client = try! SwiftMIDI.createClient(name: "Isotype") { notification in
-    if let notification = SwiftMIDI.Notification.make(with: notification) {
-        print(notification.description)
-    }
-}
-defer { try? SwiftMIDI.disposeClient(client) }
-
-// Initialize the keyboard MIDI port -- exit on failure
-//
-let port = try! SwiftMIDI.createOutputPort(clientRef: client, portName: "keyboard")
-
 // Setup device selection state
 //
 class Device: NSObject {
     static var all = [Device]()
-    static var selected: Device? = nil
+    static var selected: MIDIEndpointRef? = nil
+    static var menu: NSMenu? = nil
 
     let menuItem: NSMenuItem
     let endpoint: MIDIEndpointRef
@@ -47,9 +35,40 @@ class Device: NSObject {
         for device in Device.all {
             device.menuItem.state = self == device ? .on : .off
         }
-        Device.selected = self
+        Device.selected = self.endpoint
+    }
+
+    static func reset() {
+        // Forget any existing devices
+        while let device = Device.all.popLast() {
+            device.menuItem.menu?.removeItem(device.menuItem)
+        }
+        // Query for latest destination list
+        let destinations = SwiftMIDI.allDestinations
+        // Create new devices and menu items
+        for (i, endpoint) in destinations.enumerated() {
+            guard let menu = Device.menu,
+                  let name = try? SwiftMIDI.getStringProperty(object: endpoint, propertyID: "name") else {
+                continue
+            }
+            let menuItem = NSMenuItem(title: name, action: #selector(Device.select(_:)), keyEquivalent: "\(i+1)")
+            let device = Device(endpoint: endpoint, menuItem: menuItem)
+            menuItem.target = device
+            menu.insertItem(menuItem, at: i)
+            Device.all.append(device)
+        }
+        // Forget selected device if it no longer exists
+        if let selected = Device.selected, !destinations.contains(selected) {
+            Device.selected = nil
+        }
     }
 }
+
+// Initialize the Isotype MIDI client/port -- exit on failure
+//
+let client = try! SwiftMIDI.createClient(name: "Isotype") { _ in Device.reset() }
+defer { try? SwiftMIDI.disposeClient(client) }
+let port = try! SwiftMIDI.createOutputPort(clientRef: client, portName: "keyboard")
 
 // Build MIDI device selection menu
 //
@@ -61,41 +80,37 @@ func build<T: NSObject>(callback: (T) -> ()) -> T {
 NSApp.mainMenu = build {
     $0.addItem(build {
         $0.submenu = build { menu in
-            for (i, endpoint) in SwiftMIDI.allDestinations.enumerated() {
-                let name = try? SwiftMIDI.getStringProperty(object: endpoint, propertyID: "name")
-                let menuItem = NSMenuItem(title: name ?? "MIDI Device \(i+1)", action: #selector(Device.select(_:)), keyEquivalent: "")
-                let device = Device(endpoint: endpoint, menuItem: menuItem)
-                menuItem.target = device
-                menu.addItem(menuItem)
-                Device.all.append(device)
-            }
+            Device.menu = menu
             menu.addItem(.separator())
             menu.addItem(.init(title: "Hide Isotype", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
             menu.addItem(.init(title: "Quit Isotype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         }
     })
 }
+Device.reset()
 
 // Add keyboard event listeners
 //
 NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
     guard event.modifierFlags.intersection([.control, .option, .command, .function]).isEmpty,
-          let device = Device.selected,
+          let destination = Device.selected,
           let characters = event.characters,
           let offset = offsets[characters] else {
         return event
     }
-    if !event.isARepeat {
-        var packet = MIDIPacket()
-        packet.data.0 = event.type == .keyUp ? 128 : 144
-        packet.data.1 = root + offset
-        packet.data.2 = event.type == .keyUp ? 0 : 127
-        packet.length = 3
-        packet.timeStamp = 0
-        var packets = MIDIPacketList(numPackets: 1, packet: packet)
-        if case .failure(let error) = Result(catching: { try SwiftMIDI.send(port: port, destination: device.endpoint, packetListPointer: &packets) }) {
-            print("\(error), [\(packet.data.0), \(packet.data.1), \(packet.data.2)]")
-        }
+    if event.isARepeat {
+        // Consume repeated events, but don't send MIDI
+        return nil
+    }
+    var packet = MIDIPacket()
+    packet.data.0 = event.type == .keyUp ? 128 : 144
+    packet.data.1 = root + offset
+    packet.data.2 = event.type == .keyUp ? 0 : 127
+    packet.length = 3
+    packet.timeStamp = 0
+    var packets = MIDIPacketList(numPackets: 1, packet: packet)
+    if case .failure(let error) = Result(catching: { try SwiftMIDI.send(port: port, destination: destination, packetListPointer: &packets) }) {
+        print("\(error), [\(packet.data.0), \(packet.data.1), \(packet.data.2)]")
     }
     return nil
 }
