@@ -11,8 +11,8 @@ _ = NSApplication.shared
 //
 let root: UInt8 = 48
 let offsets: [String: UInt8] = [
-    "q": 10, "w": 11, "e": 12, "r": 13, "t": 14, "y": 15, "u": 16, "i": 17, "o": 18, "p": 19,
-    "a": 05, "s": 06, "d": 07, "f": 08, "g": 09, "h": 10, "j": 11, "k": 12, "l": 13, ";": 14,
+    "q": 10, "w": 11, "e": 12, "r": 13, "t": 14, "y": 15, "u": 16, "i": 17, "o": 18, "p": 19, "[": 20, "]": 21,
+    "a": 05, "s": 06, "d": 07, "f": 08, "g": 09, "h": 10, "j": 11, "k": 12, "l": 13, ";": 14, "'": 15,
     "z": 00, "x": 01, "c": 02, "v": 03, "b": 04, "n": 05, "m": 06, ",": 07, ".": 08, "/": 09,
 ]
 
@@ -23,8 +23,8 @@ class Device: NSObject {
     static var selected: MIDIEndpointRef? = nil
     static var menu: NSMenu? = nil
 
-    let menuItem: NSMenuItem
     let endpoint: MIDIEndpointRef
+    let menuItem: NSMenuItem
 
     init(endpoint: MIDIEndpointRef, menuItem: NSMenuItem) {
         self.endpoint = endpoint
@@ -45,6 +45,7 @@ class Device: NSObject {
         }
         // Query for latest destination list
         let destinations = SwiftMIDI.allDestinations
+        print("\(destinations.count) MIDI destinations available")
         // Create new devices and menu items
         for (i, endpoint) in destinations.enumerated() {
             guard let menu = Device.menu,
@@ -67,7 +68,6 @@ class Device: NSObject {
 // Initialize the Isotype MIDI client/port -- exit on failure
 //
 let client = try! SwiftMIDI.createClient(name: "Isotype") { _ in Device.reset() }
-defer { try? SwiftMIDI.disposeClient(client) }
 let port = try! SwiftMIDI.createOutputPort(clientRef: client, portName: "keyboard")
 
 // Build MIDI device selection menu
@@ -109,7 +109,9 @@ NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
     packet.length = 3
     packet.timeStamp = 0
     var packets = MIDIPacketList(numPackets: 1, packet: packet)
-    if case .failure(let error) = Result(catching: { try SwiftMIDI.send(port: port, destination: destination, packetListPointer: &packets) }) {
+    do {
+        try SwiftMIDI.send(port: port, destination: destination, packetListPointer: &packets)
+    } catch(let error) {
         print("\(error), [\(packet.data.0), \(packet.data.1), \(packet.data.2)]")
     }
     return nil
