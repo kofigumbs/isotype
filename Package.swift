@@ -11,6 +11,6 @@ let package = Package(
         .package(url: "https://github.com/moosefactory/SwiftMIDI", revision: "c884e4a"),
     ],
     targets: [
-        .executableTarget(name: "Isotype", dependencies: ["SwiftMIDI"], path: ".", exclude: ["README.md"]),
+        .executableTarget(name: "Isotype", dependencies: ["SwiftMIDI"]),
     ]
 )
