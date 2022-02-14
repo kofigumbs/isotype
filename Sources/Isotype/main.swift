@@ -1,7 +1,5 @@
 import Foundation
 import AppKit
-import CoreMIDI
-import SwiftMIDI
 
 // Forward declare app
 //
@@ -16,61 +14,17 @@ let offsets: [String: UInt8] = [
     "z": 00, "x": 01, "c": 02, "v": 03, "b": 04, "n": 05, "m": 06, ",": 07, ".": 08, "/": 09,
 ]
 
-// Setup device selection state
-//
-class Device: NSObject {
-    static var all = [Device]()
-    static var selected: MIDIEndpointRef? = nil
-    static var menu: NSMenu? = nil
+// Start SSH procss
+let process = Process()
+let pipe = Pipe()
+process.executableURL = .init(fileURLWithPath: "/usr/bin/env")
+process.arguments = [ "ssh", "pi@raspberrypi.local" ]
+process.standardInput = pipe.fileHandleForReading
+process.standardOutput = FileHandle.nullDevice
+process.terminationHandler = { exit($0.terminationStatus) }
+try! process.run()
 
-    let endpoint: MIDIEndpointRef
-    let menuItem: NSMenuItem
-
-    init(endpoint: MIDIEndpointRef, menuItem: NSMenuItem) {
-        self.endpoint = endpoint
-        self.menuItem = menuItem
-    }
-
-    @objc func select(_: Any? = nil) {
-        for device in Device.all {
-            device.menuItem.state = self == device ? .on : .off
-        }
-        Device.selected = self.endpoint
-    }
-
-    static func reset() {
-        // Forget any existing devices
-        while let device = Device.all.popLast() {
-            device.menuItem.menu?.removeItem(device.menuItem)
-        }
-        // Query for latest destination list
-        let destinations = SwiftMIDI.allDestinations
-        print("\(destinations.count) MIDI destinations available")
-        // Create new devices and menu items
-        for (i, endpoint) in destinations.enumerated() {
-            guard let menu = Device.menu,
-                  let name = try? SwiftMIDI.getStringProperty(object: endpoint, propertyID: "name") else {
-                continue
-            }
-            let menuItem = NSMenuItem(title: name, action: #selector(Device.select(_:)), keyEquivalent: "\(i+1)")
-            let device = Device(endpoint: endpoint, menuItem: menuItem)
-            menuItem.target = device
-            menu.insertItem(menuItem, at: i)
-            Device.all.append(device)
-        }
-        // Forget selected device if it no longer exists
-        if let selected = Device.selected, !destinations.contains(selected) {
-            Device.selected = nil
-        }
-    }
-}
-
-// Initialize the Isotype MIDI client/port -- exit on failure
-//
-let client = try! SwiftMIDI.createClient(name: "Isotype") { _ in Device.reset() }
-let port = try! SwiftMIDI.createOutputPort(clientRef: client, portName: "keyboard")
-
-// Build MIDI device selection menu
+// Build app menu
 //
 func build<T: NSObject>(callback: (T) -> ()) -> T {
     let subject = T()
@@ -79,21 +33,17 @@ func build<T: NSObject>(callback: (T) -> ()) -> T {
 }
 NSApp.mainMenu = build {
     $0.addItem(build {
-        $0.submenu = build { menu in
-            Device.menu = menu
-            menu.addItem(.separator())
-            menu.addItem(.init(title: "Hide Isotype", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
-            menu.addItem(.init(title: "Quit Isotype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        $0.submenu = build {
+            $0.addItem(.init(title: "Hide Isotype", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+            $0.addItem(.init(title: "Quit Isotype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         }
     })
 }
-Device.reset()
 
 // Add keyboard event listeners
 //
 NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
     guard event.modifierFlags.intersection([.control, .option, .command, .function]).isEmpty,
-          let destination = Device.selected,
           let characters = event.characters,
           let offset = offsets[characters] else {
         return event
@@ -102,17 +52,12 @@ NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
         // Consume repeated events, but don't send MIDI
         return nil
     }
-    var packet = MIDIPacket()
-    packet.data.0 = event.type == .keyUp ? 128 : 144
-    packet.data.1 = root + offset
-    packet.data.2 = event.type == .keyUp ? 0 : 127
-    packet.length = 3
-    packet.timeStamp = 0
-    var packets = MIDIPacketList(numPackets: 1, packet: packet)
+    let note = String(format:"%02X", root + offset)
+    let midi = event.type == .keyUp ? "80 \(note) 00" : "90 \(note) 7f"
     do {
-        try SwiftMIDI.send(port: port, destination: destination, packetListPointer: &packets)
+        try pipe.fileHandleForWriting.write(contentsOf: "amidi -p hw:pisound -S '\(midi)'\n".data(using: .utf8)!)
     } catch(let error) {
-        print("\(error), [\(packet.data.0), \(packet.data.1), \(packet.data.2)]")
+        print("\(error), \(midi)")
     }
     return nil
 }
